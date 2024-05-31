@@ -17,8 +17,6 @@ import torch_ac
 
 from gym.spaces import Box, Discrete
 
-from gnns.graphs.GCN import *
-from gnns.graphs.GNN import GNNMaker
 
 from env_model import getEnvModel
 from policy_network import PolicyNetwork
@@ -73,11 +71,6 @@ class ACModel(nn.Module, torch_ac.ACModel):
                 self.text_rnn = LSTMModel(obs_space["text"], self.word_embedding_size, 16, self.text_embedding_size).to(self.device)
             print("RNN Number of parameters:", sum(p.numel() for p in self.text_rnn.parameters() if p.requires_grad))
         
-        elif self.use_ast:
-            hidden_dim = 32
-            self.text_embedding_size = 32
-            self.gnn = GNNMaker(self.gnn_type, obs_space["text"], self.text_embedding_size).to(self.device)
-            print("GNN Number of parameters:", sum(p.numel() for p in self.gnn.parameters() if p.requires_grad))
 
        # Resize image embedding
         self.embedding_size = self.env_model.size()
