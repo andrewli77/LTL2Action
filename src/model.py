@@ -32,14 +32,15 @@ def init_params(m):
 
 
 class ACModel(nn.Module, torch_ac.ACModel):
-    def __init__(self, env, obs_space, action_space, ignoreLTL, gnn_type, dumb_ac, freeze_ltl):
+    def __init__(self, env, obs_space, action_space, ignoreLTL, ltl_encoder, dumb_ac, freeze_ltl):
         super().__init__()
 
         # Decide which components are enabled
         self.use_progression_info = "progress_info" in obs_space
-        self.use_text = not ignoreLTL and (gnn_type == "GRU" or gnn_type == "LSTM") and "text" in obs_space
-        self.use_ast = not ignoreLTL and ("GCN" in gnn_type) and "text" in obs_space
-        self.gnn_type = gnn_type
+        self.use_text = not ignoreLTL and (ltl_encoder == "GRU" or ltl_encoder == "LSTM") and "text" in obs_space
+        self.use_llm = not ignoreLTL and (ltl_encoder == "LLM") and "text" in obs_space
+        self.use_ast = not ignoreLTL and ("GCN" in ltl_encoder) and "text" in obs_space
+        self.ltl_encoder = ltl_encoder
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.action_space = action_space
         self.dumb_ac = dumb_ac
@@ -71,11 +72,17 @@ class ACModel(nn.Module, torch_ac.ACModel):
                 self.text_rnn = LSTMModel(obs_space["text"], self.word_embedding_size, 16, self.text_embedding_size).to(self.device)
             print("RNN Number of parameters:", sum(p.numel() for p in self.text_rnn.parameters() if p.requires_grad))
         
-
+        elif self.use_llm:
+            from sentence_transformers import SentenceTransformer
+            self.llm = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device=self.device)
+            self.text_embedding_size = 384
+            print("Using pretrained LLM encoder")
+            for parameter in self.llm.parameters():
+                parameter.requires_grad = False
        # Resize image embedding
         self.embedding_size = self.env_model.size()
         print("embedding size:", self.embedding_size)
-        if self.use_text or self.use_ast or self.use_progression_info:
+        if self.use_text or self.use_llm or self.use_ast or self.use_progression_info:
             self.embedding_size += self.text_embedding_size
 
         if self.dumb_ac:
@@ -114,6 +121,10 @@ class ACModel(nn.Module, torch_ac.ACModel):
             embed_text = self.text_rnn(obs.text)
             embedding = torch.cat((embedding, embed_text), dim=1) if embedding is not None else embed_text
 
+        # Adding LLM
+        elif self.use_llm:
+            embed_text = self.llm.encode(obs.text, show_progress_bar=False, convert_to_tensor=True, device=self.device)
+            embedding = torch.cat((embedding, embed_text), dim=1) if embedding is not None else embed_text
         # Adding GNN
         elif self.use_ast:
             embed_gnn = self.gnn(obs.text)

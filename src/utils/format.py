@@ -15,7 +15,7 @@ import utils
 from envs import *
 from ltl_wrappers import LTLEnv
 
-def get_obss_preprocessor(env, gnn, progression_mode):
+def get_obss_preprocessor(env, ltl_encoder, progression_mode):
     obs_space = env.observation_space
     vocab_space = env.get_propositions()
     vocab = None
@@ -39,7 +39,7 @@ def get_obss_preprocessor(env, gnn, progression_mode):
                 def preprocess_obss(obss, device=None):
                     return torch_ac.DictList({
                         "image": preprocess_images([obs["features"] for obs in obss], device=device),
-                        "text":  preprocess_texts([obs["text"] for obs in obss], vocab, vocab_space, gnn=gnn, device=device, ast=None)
+                        "text":  preprocess_texts([obs["text"] for obs in obss], vocab, vocab_space, ltl_encoder=ltl_encoder, device=device, ast=None)
                     })
 
             preprocess_obss.vocab = vocab
@@ -60,7 +60,7 @@ def get_obss_preprocessor(env, gnn, progression_mode):
 
                 def preprocess_obss(obss, device=None):
                     return torch_ac.DictList({
-                        "text":  preprocess_texts([obs["text"] for obs in obss], vocab, vocab_space, gnn=gnn, device=device, ast=tree_builder)
+                        "text":  preprocess_texts([obs["text"] for obs in obss], vocab, vocab_space, ltl_encoder=ltl_encoder, device=device, ast=tree_builder)
                     })
 
             preprocess_obss.vocab = vocab
@@ -87,17 +87,19 @@ def preprocess_images(images, device=None):
     return torch.tensor(images, device=device, dtype=torch.float)
 
 
-def preprocess_texts(texts, vocab, vocab_space, gnn=False, device=None, **kwargs):
-    if (gnn):
+def preprocess_texts(texts, vocab, vocab_space, ltl_encoder, device=None, **kwargs):
+    if ltl_encoder=="GRU" or ltl_encoder=="LSTM":
+        return preprocess4rnn(texts, vocab, device)
+    elif ltl_encoder=="LLM":
+        return np.array(texts)
+    else:
         return preprocess4gnn(texts, kwargs["ast"], device)
-
-    return preprocess4rnn(texts, vocab, device)
-
 
 def preprocess4rnn(texts, vocab, device=None):
     """
     This function receives the LTL formulas and convert them into inputs for an RNN
     """
+
     var_indexed_texts = []
     max_text_len = 0
 
@@ -112,7 +114,7 @@ def preprocess4rnn(texts, vocab, device=None):
 
     for i, indexed_text in enumerate(var_indexed_texts):
         indexed_texts[i, :len(indexed_text)] = indexed_text
-
+    
     return torch.tensor(indexed_texts, device=device, dtype=torch.long)
 
 def preprocess4gnn(texts, ast, device=None):
