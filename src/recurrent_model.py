@@ -17,8 +17,6 @@ import torch_ac
 
 from gym.spaces import Box, Discrete
 
-from gnns.graphs.GCN import *
-from gnns.graphs.GNN import GNNMaker
 
 from env_model import getEnvModel
 from policy_network import PolicyNetwork

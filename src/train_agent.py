@@ -32,6 +32,8 @@ import datetime
 import torch
 import torch_ac
 import tensorboardX
+import wandb
+import os
 import sys
 import glob
 from math import floor
@@ -65,6 +67,7 @@ parser.add_argument("--procs", type=int, default=16,
 parser.add_argument("--frames", type=int, default=2*10**8,
                     help="number of frames of training (default: 2*10e8)")
 parser.add_argument("--checkpoint-dir", default=None)
+parser.add_argument("--wandb", action="store_true", default=False, help="Log the experiment with weights & biases")
 
 ## Evaluation parameters
 parser.add_argument("--eval", action="store_true", default=False,
@@ -111,9 +114,9 @@ parser.add_argument("--progression-mode", default="full",
                     help="Full: uses LTL progression; partial: shows the propositions which progress or falsify the formula; none: only original formula is seen. ")
 parser.add_argument("--recurrence", type=int, default=1,
                     help="number of time-steps gradient is backpropagated (default: 1). If > 1, a LSTM is added to the model to have memory.")
-parser.add_argument("--gnn", default="RGCN_8x32_ROOT_SHARED", help="use gnn to model the LTL (only if ignoreLTL==True)")
+parser.add_argument("--ltl-encoder", default="RGCN_8x32_ROOT_SHARED", help="encoder  model for the LTL (only if ignoreLTL==True)")
 parser.add_argument("--int-reward", type=float, default=0.0, help="the intrinsic reward for LTL progression (default: 0.0)")
-parser.add_argument("--pretrained-gnn", action="store_true", default=False, help="load a pre-trained LTL module.")
+parser.add_argument("--pretrained-ltl-encoder", action="store_true", default=False, help="load a pre-trained LTL module.")
 parser.add_argument("--dumb-ac", action="store_true", default=False,help="Use a single-layer actor-critic")
 parser.add_argument("--freeze-ltl", action="store_true", default=False,help="Freeze the gradient updates of the LTL module")
 
@@ -125,19 +128,19 @@ use_mem = args.recurrence > 1
 
 date = datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
 
-gnn_name = args.gnn
+ltl_encoder_name = args.ltl_encoder
 if args.ignoreLTL:
-    gnn_name = "IgnoreLTL"
+    ltl_encoder_name = "IgnoreLTL"
 if args.dumb_ac:
-    gnn_name = gnn_name + "-dumb_ac"
-if args.pretrained_gnn:
-    gnn_name = gnn_name + "-pretrained"
+    ltl_encoder_name = ltl_encoder_name + "-dumb_ac"
+if args.pretrained_ltl_encoder:
+    ltl_encoder_name = ltl_encoder_name + "-pretrained"
 if args.freeze_ltl:
-    gnn_name = gnn_name + "-freeze_ltl"
+    ltl_encoder_name = ltl_encoder_name + "-freeze_ltl"
 if use_mem:
-    gnn_name = gnn_name + "-recurrence:%d"%(args.recurrence)
+    ltl_encoder_name = ltl_encoder_name + "-recurrence:%d"%(args.recurrence)
 
-default_model_name = f"{gnn_name}_{args.ltl_sampler}_{args.env}_seed:{args.seed}_epochs:{args.epochs}_bs:{args.batch_size}_fpp:{args.frames_per_proc}_dsc:{args.discount}_lr:{args.lr}_ent:{args.entropy_coef}_clip:{args.clip_eps}_prog:{args.progression_mode}"
+default_model_name = f"{ltl_encoder_name}_{args.ltl_sampler}_{args.env}_seed:{args.seed}_epochs:{args.epochs}_bs:{args.batch_size}_fpp:{args.frames_per_proc}_dsc:{args.discount}_lr:{args.lr}_ent:{args.entropy_coef}_clip:{args.clip_eps}_prog:{args.progression_mode}"
 
 model_name = args.model or default_model_name
 storage_dir = "storage" if args.checkpoint_dir is None else args.checkpoint_dir
@@ -145,9 +148,9 @@ model_dir = utils.get_model_dir(model_name, storage_dir)
 
 pretrained_model_dir = None
 
-if args.pretrained_gnn:
+if args.pretrained_ltl_encoder:
     assert(args.progression_mode == "full")
-    default_dir = f"symbol-storage/{args.gnn}-dumb_ac_{args.ltl_sampler}_Simple-LTL-Env-v0_seed:{args.seed}_*_prog:{args.progression_mode}/train"
+    default_dir = f"symbol-storage/{args.ltl_encoder}-dumb_ac_{args.ltl_sampler}_Simple-LTL-Env-v0_seed:{args.seed}_*_prog:{args.progression_mode}/train"
     print(default_dir)
     model_dirs = glob.glob(default_dir)
     if len(model_dirs) == 0:
@@ -160,8 +163,17 @@ if args.pretrained_gnn:
 
 txt_logger = utils.get_txt_logger(model_dir + "/train")
 csv_file, csv_logger = utils.get_csv_logger(model_dir + "/train")
-tb_writer = tensorboardX.SummaryWriter(model_dir + "/train")
 utils.save_config(model_dir + "/train", args)
+
+if not args.wandb:
+    os.environ['WANDB_MODE'] = 'disabled'
+
+wandb.init(project='noisy-detector')
+wandb.run.name = default_model_name
+wandb.run.save()
+config = wandb.config
+config.update(args)
+
 
 # Log command and all script arguments
 
@@ -209,22 +221,21 @@ if pretrained_model_dir is not None:
         exit(1)
 
 # Load observations preprocessor
-using_gnn = (args.gnn != "GRU" and args.gnn != "LSTM")
-obs_space, preprocess_obss = utils.get_obss_preprocessor(envs[0], using_gnn, progression_mode)
+obs_space, preprocess_obss = utils.get_obss_preprocessor(envs[0], args.ltl_encoder, progression_mode)
 if "vocab" in status and preprocess_obss.vocab is not None:
     preprocess_obss.vocab.load_vocab(status["vocab"])
 txt_logger.info("Observations preprocessor loaded.\n")
 
 # Load model
 if use_mem:
-    acmodel = RecurrentACModel(envs[0].env, obs_space, envs[0].action_space, args.ignoreLTL, args.gnn, args.dumb_ac, args.freeze_ltl)
+    acmodel = RecurrentACModel(envs[0].env, obs_space, envs[0].action_space, args.ignoreLTL, args.ltl_encoder, args.dumb_ac, args.freeze_ltl)
 else:
-    acmodel = ACModel(envs[0].env, obs_space, envs[0].action_space, args.ignoreLTL, args.gnn, args.dumb_ac, args.freeze_ltl)
+    acmodel = ACModel(envs[0].env, obs_space, envs[0].action_space, args.ignoreLTL, args.ltl_encoder, args.dumb_ac, args.freeze_ltl)
 if "model_state" in status:
     acmodel.load_state_dict(status["model_state"])
     txt_logger.info("Loading model from existing run.\n")
 
-elif args.pretrained_gnn:
+elif args.pretrained_ltl_encoder:
     acmodel.load_pretrained_gnn(pretrained_status["model_state"])
     txt_logger.info("Pretrained model loaded.\n")
 
@@ -258,7 +269,7 @@ if args.eval:
     evals = []
     for eval_sampler in eval_samplers:
         evals.append(utils.Eval(eval_env, model_name, eval_sampler,
-                    seed=args.seed, device=device, num_procs=eval_procs, ignoreLTL=args.ignoreLTL, progression_mode=progression_mode, gnn=args.gnn, dumb_ac = args.dumb_ac))
+                    seed=args.seed, device=device, num_procs=eval_procs, ignoreLTL=args.ignoreLTL, progression_mode=progression_mode, gnn=args.ltl_encoder, dumb_ac = args.dumb_ac))
 
 
 # Train model
@@ -315,8 +326,7 @@ while num_frames < args.frames:
         csv_file.flush()
 
         for field, value in zip(header, data):
-            tb_writer.add_scalar(field, value, num_frames)
-
+            wandb.log({field: value})
     # Save status
 
     if args.save_interval > 0 and update % args.save_interval == 0:
