@@ -16,7 +16,7 @@ from torch.distributions import Categorical, Normal
 import torch_ac
 
 from gym.spaces import Box, Discrete
-
+import cachetools
 
 from env_model import getEnvModel
 from policy_network import PolicyNetwork
@@ -79,6 +79,9 @@ class ACModel(nn.Module, torch_ac.ACModel):
             print("Using pretrained LLM encoder")
             for parameter in self.llm.parameters():
                 parameter.requires_grad = False
+            
+            self.llm_cache = cachetools.LRUCache(maxsize=1000)
+
        # Resize image embedding
         self.embedding_size = self.env_model.size()
         print("embedding size:", self.embedding_size)
@@ -123,7 +126,7 @@ class ACModel(nn.Module, torch_ac.ACModel):
 
         # Adding LLM
         elif self.use_llm:
-            embed_text = self.llm.encode(obs.text, show_progress_bar=False, convert_to_tensor=True, device=self.device)
+            embed_text = self.llm_call(obs.text)  #self.llm.encode(obs.text, show_progress_bar=False, convert_to_tensor=True, device=self.device)
             embedding = torch.cat((embedding, embed_text), dim=1) if embedding is not None else embed_text
         # Adding GNN
         elif self.use_ast:
@@ -138,6 +141,26 @@ class ACModel(nn.Module, torch_ac.ACModel):
         value = x.squeeze(1)
 
         return dist, value
+
+    def llm_call(self, text):
+        outs = [None for i in range(len(text))]
+        for i in range(len(text)):
+            if text[i] in self.llm_cache:
+                outs[i] = self.llm_cache[text[i]]
+
+        remaining_inputs = [text[i] for i in range(len(text)) if outs[i] is None]
+        print("cache hits:", (len(text) - len(remaining_inputs))/len(text))
+        import pdb; pdb.set_trace()      
+        
+        if len(remaining_inputs) > 0:
+            vals = self.llm.encode(remaining_inputs, show_progress_bar=False, convert_to_tensor=False,device=self.device)
+            j_cur = 0
+            for i in range(len(text)):
+                if outs[i] is None:
+                    outs[i] = vals[j_cur]
+                    j_cur += 1
+                    self.llm_cache[text[i]] = outs[i]
+        return torch.tensor(outs, device=self.device)
 
     def load_pretrained_gnn(self, model_state):
         # We delete all keys relating to the actor/critic.

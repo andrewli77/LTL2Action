@@ -210,7 +210,7 @@ txt_logger.info("Environments loaded\n")
 try:
     status = utils.get_status(model_dir + "/train")
 except OSError:
-    status = {"num_frames": 0, "update": 0}
+    status = {"num_frames": 0, "update": 0, "duration": 0}
 txt_logger.info("Training status loaded.\n")
 
 if pretrained_model_dir is not None:
@@ -276,6 +276,7 @@ if args.eval:
 
 num_frames = status["num_frames"]
 update = status["update"]
+duration = status["duration"]
 start_time = time.time()
 
 while num_frames < args.frames:
@@ -294,7 +295,7 @@ while num_frames < args.frames:
 
     if update % args.log_interval == 0:
         fps = logs["num_frames"]/(update_end_time - update_start_time)
-        duration = int(time.time() - start_time)
+        run_duration = int(time.time() - start_time)
 
         return_per_episode = utils.synthesize(logs["return_per_episode"])
         rreturn_per_episode = utils.synthesize(logs["reshaped_return_per_episode"])
@@ -303,7 +304,7 @@ while num_frames < args.frames:
         num_frames_per_episode = utils.synthesize(logs["num_frames_per_episode"])
 
         header = ["update", "frames", "FPS", "duration"]
-        data = [update, num_frames, fps, duration]
+        data = [update, num_frames, fps, duration + run_duration]
         header += ["rreturn_" + key for key in rreturn_per_episode.keys()]
         data += rreturn_per_episode.values()
         header += ["average_reward_per_step", "average_discounted_return"]
@@ -330,7 +331,7 @@ while num_frames < args.frames:
     # Save status
 
     if args.save_interval > 0 and update % args.save_interval == 0:
-        status = {"num_frames": num_frames, "update": update,
+        status = {"num_frames": num_frames, "update": update, "duration": duration + run_duration,
                   "model_state": algo.acmodel.state_dict(), "optimizer_state": algo.optimizer.state_dict()}
         if hasattr(preprocess_obss, "vocab") and preprocess_obss.vocab is not None:
             status["vocab"] = preprocess_obss.vocab.vocab

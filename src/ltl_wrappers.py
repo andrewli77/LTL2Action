@@ -20,6 +20,7 @@ import gym
 from gym import spaces
 import ltl_progression, random
 from ltl_samplers import getLTLSampler, SequenceSampler
+import functools
 
 class LTLEnv(gym.Wrapper):
     def __init__(self, env, progression_mode="full", ltl_sampler=None, intrinsic=0.0):
@@ -76,7 +77,7 @@ class LTLEnv(gym.Wrapper):
         if self.progression_mode == "partial":
             ltl_obs = {'features': self.obs,'progress_info': self.progress_info(self.ltl_goal)}
         else:
-            ltl_obs = {'features': self.obs,'text': self.ltl_goal}
+            ltl_obs = {'features': self.obs,'text': translate_ltl(self.ltl_goal)}
         return ltl_obs
 
 
@@ -104,7 +105,7 @@ class LTLEnv(gym.Wrapper):
 
         # Computing the new observation and returning the outcome of this action
         if self.progression_mode == "full":
-            ltl_obs = {'features': self.obs,'text': self.ltl_goal}
+            ltl_obs = {'features': self.obs,'text': translate_ltl(self.ltl_goal)}
         elif self.progression_mode == "none":
             ltl_obs = {'features': self.obs,'text': self.ltl_original}
         elif self.progression_mode == "partial":
@@ -187,3 +188,69 @@ class NoLTLWrapper(gym.Wrapper):
 
     def get_propositions(self):
         return list([])
+
+letter_map = {
+    'a': 'bank',
+    'b': 'park',
+    'c': 'mall',
+    'd': 'library',
+    'e': 'gym',
+    'f': 'office',
+    'g': 'home',
+    'h': 'school',
+    'i': 'theatre',
+    'j': 'restaurant',
+    'k': 'salon',
+    'l': 'barbershop',
+    'True': 'True',
+    'False': 'False',
+}
+
+@functools.lru_cache(maxsize=1000)
+def translate_ltl(ltl):
+    if atomic(ltl):
+        return letter_map[ltl]
+
+    if ltl[0] == 'until':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        b = translate_ltl(ltl[2])
+        b = f"({b})" if not atomic(ltl[2]) else b
+        return f"{a} until {b}"
+
+    if ltl[0] == 'next':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        return f"next {a}"
+
+    if ltl[0] == 'always':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        return f"always {a}"
+
+    if ltl[0] == 'eventually':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        return f"eventually {a}"
+
+    if ltl[0] == 'and':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        b = translate_ltl(ltl[2])
+        b = f"({b})" if not atomic(ltl[2]) else b
+        return f"{a} and {b}"        
+
+    if ltl[0] == 'or':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        b = translate_ltl(ltl[2])
+        b = f"({b})" if not atomic(ltl[2]) else b
+        return f"{a} or {b}"
+
+    if ltl[0] == 'not':
+        a = translate_ltl(ltl[1])
+        a = f"({a})" if not atomic(ltl[1]) else a
+        return f"not {a}"
+
+def atomic(ltl):
+    return type(ltl) == str
